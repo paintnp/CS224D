@@ -6,6 +6,7 @@ import time
 import numpy as np
 import tensorflow as tf
 from q2_initialization import xavier_weight_init
+from q1_softmax import softmax
 import data_utils.utils as du
 import data_utils.ner as ner
 from utils import data_iterator
@@ -91,9 +92,9 @@ class NERModel(LanguageModel):
 
     (Don't change the variable names)
     """
-    ### YOUR CODE HERE
-    raise NotImplementedError
-    ### END YOUR CODE
+    self.input_placeholder = tf.placeholder(tf.int32,[None, self.config.window_size])
+    self.labels_placeholder = tf.placeholder(tf.float32, [None, self.config.label_size])
+    self.dropout_placeholder = tf.placeholder(tf.float32)
 
   def create_feed_dict(self, input_batch, dropout, label_batch=None):
     """Creates the feed_dict for softmax classifier.
@@ -116,9 +117,17 @@ class NERModel(LanguageModel):
     Returns:
       feed_dict: The feed dictionary mapping from placeholders to values.
     """
-    ### YOUR CODE HERE
-    raise NotImplementedError
-    ### END YOUR CODE
+    if label_batch == None:
+      feed_dict = {
+        self.input_placeholder:input_batch,
+        self.dropout_placeholder:dropout
+      }
+    else:
+      feed_dict = {
+        self.input_placeholder: input_batch,
+        self.dropout_placeholder: dropout,
+        self.labels_placeholder:label_batch
+      }
     return feed_dict
 
   def add_embedding(self):
@@ -147,9 +156,12 @@ class NERModel(LanguageModel):
     """
     # The embedding lookup is currently only implemented for the CPU
     with tf.device('/cpu:0'):
-      ### YOUR CODE HERE
-      raise NotImplementedError
-      ### END YOUR CODE
+      embeddings = tf.Variable(
+        tf.random_uniform([len(self.wv), self.config.embed_size], -1.0, 1.0)
+      )
+
+      word_embeddings = tf.nn.embedding_lookup(embeddings, self.input_placeholder)
+      window = tf.reshape(word_embeddings, [-1, self.config.window_size * self.config.embed_size])
       return window
 
   def add_model(self, window):
@@ -179,9 +191,20 @@ class NERModel(LanguageModel):
     Returns:
       output: tf.Tensor of shape (batch_size, label_size)
     """
-    ### YOUR CODE HERE
-    raise NotImplementedError
-    ### END YOUR CODE
+    with tf.variable_scope("Layer"):
+      W = tf.get_variable("weights", (self.config.window_size*self.config.embed_size, self.config.hidden_size), initializer=xavier_weight_init())
+      b1 = tf.get_variable("b1", (self.config.hidden_size,), initializer=tf.constant_initializer(0.0))
+      h = tf.nn.dropout(tf.tanh(tf.matmul(window, W) + b1), self.dropout_placeholder)
+      weight_decay = tf.mul(tf.nn.l2_loss(W), self.config.l2, name='weight_loss')
+      tf.add_to_collection('losses', weight_decay)
+    with tf.variable_scope("Softmax"):
+      U = tf.get_variable("weights", (self.config.hidden_size,self.config.label_size), initializer=xavier_weight_init())
+      b2 = tf.get_variable("b2", (self.config.label_size))
+      weight_decay = tf.mul(tf.nn.l2_loss(U), self.config.l2, name='weight_loss')
+      tf.add_to_collection('losses', weight_decay)
+      output = tf.nn.softmax(tf.nn.dropout(tf.matmul(h,U) + b2, self.dropout_placeholder))
+      # output = softmax(tf.matmul(h,U) + b2)
+
     return output 
 
   def add_loss_op(self, y):
@@ -194,10 +217,11 @@ class NERModel(LanguageModel):
     Returns:
       loss: A 0-d tensor (scalar)
     """
-    ### YOUR CODE HERE
-    raise NotImplementedError
-    ### END YOUR CODE
-    return loss
+    cross_entropy = tf.nn.softmax_cross_entropy_with_logits(
+          y, self.labels_placeholder, name='cross_entropy_per_example')
+    cross_entropy_mean = tf.reduce_mean(cross_entropy, name='cross_entropy')
+    tf.add_to_collection('losses', cross_entropy_mean)
+    return tf.add_n(tf.get_collection('losses'), name='total_loss')
 
   def add_training_op(self, loss):
     """Sets up the training Ops.
@@ -218,9 +242,9 @@ class NERModel(LanguageModel):
     Returns:
       train_op: The Op for training.
     """
-    ### YOUR CODE HERE
-    raise NotImplementedError
-    ### END YOUR CODE
+
+    opt = tf.train.AdamOptimizer(self.config.lr)
+    train_op = opt.minimize(loss)
     return train_op
 
   def __init__(self, config):
